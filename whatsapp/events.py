@@ -1,17 +1,64 @@
-from typing import List, Optional
+from pathlib import Path
 from pydantic import BaseModel, Field
+from typing import List, Optional, Literal
+
+MessageType = Literal[
+    "audio",
+    "button",
+    "document",
+    "reaction",
+    "text",
+    "image",
+    "interactive",
+    "order",
+    "sticker",
+    "system",  # for customer number change messages
+    "unknown",
+    "video"
+]
 
 
 class Text(BaseModel):
     body: str
 
 
+class Audio(BaseModel):
+    id: str
+    sha256: str
+    voice: bool
+    mime_type: str
+
+
+class Video(BaseModel):
+    id: str
+    sha256: str
+    mime_type: str
+
+
+class Image(BaseModel):
+    id: str
+    sha256: str
+    mime_type: str
+
+
+class Document(BaseModel):
+    id: str
+    sha256: str
+    filename: str
+    mime_type: str
+
+
 class MessageEvent(BaseModel):
     id: str
-    type: str
     timestamp: str
-    text: Optional[Text]
+    type: MessageType
+    file: Path | None = None
     from_: str = Field(alias="from")
+    text: Optional[Text] | None = None
+    image: Optional[Image] | None = None
+    audio: Optional[Audio] | None = None
+    video: Optional[Video] | None = None
+    document: Optional[Document] | None = None
 
 
 class Profile(BaseModel):
@@ -45,12 +92,12 @@ class Pricing(BaseModel):
 
 
 class Status(BaseModel):
-    conversation: Conversation
     id: str
     status: str
     timestamp: str
-    pricing: Pricing
     recipient_id: str
+    pricing: Pricing | None = None
+    conversation: Conversation | None = None
 
 
 class Value(BaseModel):
@@ -74,3 +121,10 @@ class Entry(BaseModel):
 class WhatsappEvent(BaseModel):
     object: str
     entry: List[Entry]
+
+
+class Message(BaseModel):
+    to: str
+    type: MessageType
+    message: MessageEvent
+    contacts: List[Contact]
