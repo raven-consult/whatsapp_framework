@@ -5,9 +5,9 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
-import multiprocessing
 from pyngrok import ngrok
-from werkzeug import Request, Response, run_simple
+from werkzeug import Request, Response
+from werkzeug.serving import make_server
 
 from whatsapp.reply_message import Message as ReplyMessage
 from whatsapp.events import MessageEvent, WhatsappEvent, Message
@@ -151,8 +151,8 @@ class ChatHandler(ABC):
             print(" * Use " + self.webhook_initialize_string +
                   " as the webhook verify token")
 
-        run_simple("localhost", 5000, app, use_reloader=False,
-                   use_debugger=False, use_evalex=False)
+        server = make_server("localhost", 5000, app)
+        server.serve_forever()
 
     def _download_media(self, media_id: str, mime_type: str):
         response = requests.get(
