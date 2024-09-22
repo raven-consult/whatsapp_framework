@@ -179,7 +179,36 @@ class ChatHandler(ABC):
 
         return filename
 
+    def _upload_media(self, phone_number_id: str, filename: str, mime_type: str):
+        response = requests.post(
+            f"{self.url}/{phone_number_id}/media",
+            headers={
+                "Authorization": f"Bearer {self.token}"
+            },
+            data={
+                "type": mime_type,
+                "messaging_product": "whatsapp",
+            },
+            files={
+                "file": (filename, open(filename, "rb"), mime_type)
+            }
+        )
+
+        data = response.json()
+        print("Media uploaded:", data) if self.debug else None
+        return data["id"]
+
     def send(self, message: ReplyMessage):
+        if message.type in ["audio", "video", "document", "image", "sticker"]:
+            media = getattr(message, message.type)
+            filename_id = self._upload_media(
+                self.whatsapp_number, media.file, media.mime_type)
+            media.id = filename_id
+
+            del media.file
+            del media.mime_type
+            setattr(message, message.type, media)
+
         response = requests.post(
             f"{self.url}/{self.whatsapp_number}/messages",
             headers={

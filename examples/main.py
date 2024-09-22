@@ -1,6 +1,6 @@
 from whatsapp.chat import ChatHandler
 from whatsapp.events import Message
-from whatsapp.reply_message import Message as ReplyMessage, Text
+from whatsapp.reply_message import Message as ReplyMessage, Text, Audio, Image
 
 
 class SimpleChatHandler(ChatHandler):
@@ -12,18 +12,25 @@ class SimpleChatHandler(ChatHandler):
         file = message.message.file
         name = message.contacts[0].profile.name
 
-        req = ReplyMessage(
-            type="text",
-            to=message.to,
-            text=Text(
-                preview_url=False,
-                body=f"""
+        text_data = Text(
+            preview_url=False,
+            body=f"""
 Hello, {name}!
 
 I received a {message_type} from you.
 I've saved it as {file}.
 """
-            ),
+        ),
+
+        data = Audio(
+            mime_type="audio/ogg",
+            file="media/891488226207985.ogg",
+        )
+
+        req = ReplyMessage(
+            audio=data,
+            type="audio",
+            to=message.to,
         )
         self.send(req)
 
