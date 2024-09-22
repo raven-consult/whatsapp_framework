@@ -90,7 +90,7 @@ class ChatHandler(ABC):
     def on_message(self, message: Message):
         pass
 
-    def create_server(self, q: Queue) -> None:
+    def create_server(self, q: Queue, port: int) -> None:
         @Request.application
         def app(request: Request) -> Response:
             if request.method == "GET":
@@ -145,13 +145,13 @@ class ChatHandler(ABC):
             return Response("", 200)
 
         if self.start_proxy:
-            public_url = ngrok.connect("5000")
+            public_url = ngrok.connect(str(port))
             print(
                 f" * ngrok tunnel \"{public_url}\" -> \"http://127.0.0.1:5000\"")
             print(" * Use " + self.webhook_initialize_string +
                   " as the webhook verify token")
 
-        server = make_server("localhost", 5000, app)
+        server = make_server("localhost", port, app)
         server.serve_forever()
 
     def _download_media(self, media_id: str, mime_type: str):
@@ -188,11 +188,12 @@ class ChatHandler(ABC):
             },
             json=message.model_dump()
         )
+
         print("Message sent:", message) if self.debug else None
         print("Response:", response.json()) if self.debug else None
         return True
 
-    def start(self):
+    def start(self, port=5000):
         with ThreadPoolExecutor(max_workers=2) as executor:
             executor.submit(self._handle_new_message)
-            executor.submit(lambda: self.create_server(self.queue))
+            executor.submit(lambda: self.create_server(self.queue, port))

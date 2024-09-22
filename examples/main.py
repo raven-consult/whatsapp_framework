@@ -30,7 +30,7 @@ I've saved it as {file}.
 
 def main():
     chat_handler = SimpleChatHandler(debug=True, start_proxy=False)
-    chat_handler.start()
+    chat_handler.start(5000)
 
 
 if __name__ == "__main__":
