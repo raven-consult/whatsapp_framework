@@ -90,7 +90,7 @@ class ChatHandler(ABC):
     def on_message(self, message: Message):
         pass
 
-    def create_server(self, q: Queue, port: int) -> None:
+    def create_server(self, q: Queue, host: str, port: int) -> None:
         @Request.application
         def app(request: Request) -> Response:
             if request.method == "GET":
@@ -151,7 +151,7 @@ class ChatHandler(ABC):
             print(" * Use " + self.webhook_initialize_string +
                   " as the webhook verify token")
 
-        server = make_server("localhost", port, app)
+        server = make_server(host, port, app)
         server.serve_forever()
 
     def _download_media(self, media_id: str, mime_type: str):
@@ -222,7 +222,7 @@ class ChatHandler(ABC):
         print("Response:", response.json()) if self.debug else None
         return True
 
-    def start(self, port=5000):
+    def start(self, host="localhost", port=5000):
         with ThreadPoolExecutor(max_workers=2) as executor:
             executor.submit(self._handle_new_message)
-            executor.submit(lambda: self.create_server(self.queue, port))
+            executor.submit(lambda: self.create_server(self.queue, host, port))
