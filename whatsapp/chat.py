@@ -1,3 +1,4 @@
+import os
 import logging
 from queue import Queue
 from pathlib import Path
@@ -11,30 +12,35 @@ from werkzeug.serving import make_server
 
 from whatsapp.utils import mime_to_extension
 from whatsapp.reply_message import Message as ReplyMessage
+from whatsapp.events import Change, WhatsappEvent, Message
 from whatsapp._handle_verfication import handle_verification
-from whatsapp.events import Change, MessageEvent, WhatsappEvent, Message
 
 
 logger = logging.getLogger(__name__)
+
+TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
+WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
 
 
 class ChatHandler(ABC):
     queue: Queue[Message] = Queue()
     url = "https://graph.facebook.com/v20.0"
 
-    token: str
-    whatsapp_number: str
-
     def __init__(
             self,
             port=5000,
             start_proxy=True,
+            token: str = TOKEN,
             media_root: str = "media",
             webhook_initialize_string="token",
+            whatsapp_number: str = WHATSAPP_NUMBER,
+
     ):
         self.port = port
+        self.token = token
         self.media_root = media_root
         self.start_proxy = start_proxy
+        self.whatsapp_number = whatsapp_number
         self.webhook_initialize_string = webhook_initialize_string
 
         if not self.whatsapp_number:
