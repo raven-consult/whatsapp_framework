@@ -127,7 +127,10 @@ class ChatHandler(ABC):
             logger.info(" * Use %s as the webhook verify token",
                         self.webhook_initialize_string)
 
-        server = make_server(host, port, app)
+        server = make_server(
+            host, port, app,
+            threaded=True, processes=4
+        )
         server.serve_forever()
 
     def _download_media(self, media_id: str, mime_type: str):
