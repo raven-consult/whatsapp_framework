@@ -15,9 +15,9 @@ class ConversationHistory:
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 conversation_id TEXT NOT NULL,
-                message TEXT NOT NULL,
                 chat_id TEXT NOT NULL,
-                sender TEXT NOT NULL
+                sender TEXT NOT NULL,
+                message TEXT NOT NULL
             )
             """
         )
@@ -27,14 +27,14 @@ class ConversationHistory:
         self.cursor.execute(
             """
             INSERT INTO messages
-            (conversation_id, message, chat_id, sender)
-            VALUES (?, ?, ?)
+            (conversation_id, chat_id, sender, message)
+            VALUES (?, ?, ?, ?)
             """,
             (
                 self.conversation_id,
-                message,
                 chat_id,
                 sender,
+                message,
             )
         )
         self.conn.commit()
