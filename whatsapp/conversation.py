@@ -1,6 +1,9 @@
 from functools import wraps
 from contextlib import contextmanager
 
+import os
+import google.generativeai as genai
+
 from whatsapp._history import ConversationHistory
 
 
@@ -15,8 +18,34 @@ def instruction(func):
 
 
 class Conversation(object):
-    def __init__(self, conversation_id: str):
+    def __init__(
+            self,
+            conversation_id: str,
+            system_message="",
+            gemini_model_name: str = "gemini-1.5-flash",
+            gemini_api_key: str = os.environ.get("GEMINI_API_KEY", ""),
+    ):
+        self.model_name = gemini_model_name
+        self.system_message = system_message
+        genai.configure(api_key=gemini_api_key)
+        self.instructions = self.get_all_instructions()
         self.history = ConversationHistory(conversation_id)
+
+    def model(self):
+        generation_config = {
+            "temperature": 1,
+            "top_p": 0.95,
+            "top_k": 64,
+            "max_output_tokens": 8192,
+            "response_mime_type": "text/plain",
+        }
+
+        return genai.GenerativeModel(
+            tools=self.instructions,
+            model_name=self.model_name,
+            generation_config=generation_config,  # type: ignore
+            system_instruction=self.system_message,
+        )
 
     def handler(self, chat_id, message: str):
         response = "Hello"
