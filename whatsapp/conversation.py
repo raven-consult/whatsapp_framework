@@ -1,6 +1,8 @@
 from functools import wraps
 from contextlib import contextmanager
 
+from whatsapp._history import ConversationHistory
+
 
 def instruction(func):
     @wraps(func)
@@ -11,15 +13,20 @@ def instruction(func):
 
 
 class Conversation(object):
-    def __init__(self) -> None:
-        pass
+    def __init__(self, conversation_id: str):
+        self.history = ConversationHistory(conversation_id)
+
+    def handler(self, chat_id, message: str):
+        response = "Hello"
+        if message == "end":
+            response = "Goodbye"
+        self.history.insert_message(chat_id, "user", message)
+        self.history.insert_message(chat_id, "bot", response)
+        return response
 
     @contextmanager
     def start_chat(self, chat_id: str):
-        def handler(message: str):
-            if message == "end":
-                return "Goodbye"
-            return "Hello"
+        handler = self.get_chat(chat_id)
 
         try:
             print("Chat started")
@@ -28,10 +35,10 @@ class Conversation(object):
             print("Chat ended")
 
     def get_chat(self, chat_id: str):
-        def handler(message: str):
-            return "Hello"
+        def chat(message: str):
+            return self.handler(chat_id, message)
 
-        return handler
+        return chat
 
 
 class EchoConversation(Conversation):
@@ -41,7 +48,7 @@ class EchoConversation(Conversation):
         return "I can help you with that. What would you like me to search for?"
 
 
-conversation = EchoConversation()
+conversation = EchoConversation("1234")
 
 with conversation.start_chat("hello") as chat:
     while True:
