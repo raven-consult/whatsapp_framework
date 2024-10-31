@@ -9,6 +9,8 @@ def instruction(func):
     def wrapper(*args, **kwargs):
         print("Instruction: ", func.__name__)
         return func(*args, **kwargs)
+
+    wrapper._is_instruction = True  # type: ignore
     return wrapper
 
 
@@ -23,6 +25,19 @@ class Conversation(object):
         self.history.insert_message(chat_id, "user", message)
         self.history.insert_message(chat_id, "bot", response)
         return response
+
+    def get_all_instructions(self):
+        instructions = []
+        for attr in dir(self):
+            is_callable = callable(getattr(self, attr))
+            is_instruction = getattr(
+                getattr(self, attr), "_is_instruction", False)
+
+            if is_callable and is_instruction:
+                print("Instruction: ", attr)
+                instructions.append(attr)
+
+        return instructions
 
     @contextmanager
     def start_chat(self, chat_id: str):
