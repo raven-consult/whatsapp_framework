@@ -23,11 +23,12 @@ packages = [
 
 
 [tool.poetry.dependencies]
-python = ">=3.8"
+python = ">=3.9"
 pyngrok = "^7.2.0"
 requests = "^2.32.3"
 pydantic = "^2.9.1"
 werkzeug = "^3.0.4"
+google-generativeai = "^0.8.3"
 
 
 [build-system]
