@@ -1,4 +1,13 @@
 import sqlite3
+from dataclasses import dataclass
+
+
+@dataclass
+class Message:
+    chat_id: int
+    sender: str
+    message: str
+    id: int | None = None
 
 
 class ConversationHistory:
@@ -23,7 +32,7 @@ class ConversationHistory:
         )
         self.conn.commit()
 
-    def insert_message(self, chat_id: str, sender: str, message: str):
+    def insert_message(self, message: Message):
         self.cursor.execute(
             """
             INSERT INTO messages
@@ -32,9 +41,9 @@ class ConversationHistory:
             """,
             (
                 self.conversation_id,
-                chat_id,
-                sender,
-                message,
+                message.chat_id,
+                message.sender,
+                message.message,
             )
         )
         self.conn.commit()
@@ -42,7 +51,8 @@ class ConversationHistory:
     def get_messages(self, chat_id: str):
         self.cursor.execute(
             """
-            SELECT * FROM messages
+            SELECT id, chat_id, sender, message
+            FROM messages
             WHERE conversation_id=? AND chat_id=?
             """,
             (
@@ -50,4 +60,11 @@ class ConversationHistory:
                 chat_id,
             )
         )
-        return self.cursor.fetchall()
+        res = self.cursor.fetchall()
+
+        return [Message(
+            id=r[0],
+            chat_id=r[1],
+            sender=r[2],
+            message=r[3],
+        ) for r in res]

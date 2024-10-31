@@ -3,8 +3,9 @@ from contextlib import contextmanager
 
 import os
 import google.generativeai as genai
+from google.protobuf.json_format import MessageToJson, MessageToDict
 
-from whatsapp._history import ConversationHistory
+from whatsapp._history import Message, ConversationHistory
 
 
 def instruction(func):
@@ -21,8 +22,8 @@ class Conversation(object):
     def __init__(
             self,
             conversation_id: str,
-            system_message="",
-            gemini_model_name: str = "gemini-1.5-flash",
+            system_message: str | None = None,
+            gemini_model_name: str = "models/gemini-1.5-flash",
             gemini_api_key: str = os.environ.get("GEMINI_API_KEY", ""),
     ):
         self.model_name = gemini_model_name
@@ -33,9 +34,9 @@ class Conversation(object):
 
     def model(self):
         generation_config = {
-            "temperature": 1,
-            "top_p": 0.95,
             "top_k": 64,
+            "top_p": 0.95,
+            "temperature": 1,
             "max_output_tokens": 8192,
             "response_mime_type": "text/plain",
         }
@@ -43,16 +44,96 @@ class Conversation(object):
         return genai.GenerativeModel(
             tools=self.instructions,
             model_name=self.model_name,
-            generation_config=generation_config,  # type: ignore
             system_instruction=self.system_message,
         )
 
     def handler(self, chat_id, message: str):
-        response = "Hello"
+        model = self.model()
+        history = self.history.get_messages(chat_id)
+
+        response = ""
         if message == "end":
             response = "Goodbye"
-        self.history.insert_message(chat_id, "user", message)
-        self.history.insert_message(chat_id, "bot", response)
+
+        session = model.start_chat(
+            history=[
+                {
+                    "role": "user" if m.sender == "user" else "model",
+                    "parts": [m.message],
+                } for m in history
+            ]
+        )
+
+        self.history.insert_message(
+            Message(
+                chat_id=chat_id,
+                sender="user",
+                message=message,
+            )
+        )
+
+        responses = None
+        end_loop = False
+        while not end_loop:
+            if responses:
+                res = session.send_message(responses)
+            else:
+                res = session.send_message(message)
+
+            fns = []
+            for part in res.parts:
+                if part.function_call:
+                    fn = part.function_call
+                    args = ", ".join(f"{key}={val}" for key,
+                                     val in fn.args.items())
+                    print(f"{fn.name}({args})")
+                    fns.append(fn)
+                    response = MessageToJson(part._pb)
+
+                    self.history.insert_message(
+                        Message(
+                            chat_id=chat_id,
+                            sender="bot",
+                            message=response,
+                        )
+                    )
+                else:
+                    response = part.text
+                    end_loop = True
+                    self.history.insert_message(
+                        Message(
+                            chat_id=chat_id,
+                            sender="bot",
+                            message=response,
+                        )
+                    )
+
+            if any(fn.name == "end_chat" for fn in fns):
+                break
+
+            responses = []
+
+            for fn in fns:
+                func = getattr(self, fn.name)
+                res = func(**fn.args)
+
+                # Build the response parts.
+                res_part = genai.protos.Part(function_response=genai.protos.FunctionResponse(
+                    name=fn.name, response={"result": res}))
+
+                responses.append(res_part)
+
+            message_json = [MessageToDict(r._pb)
+                            for r in responses]  # type: ignore
+
+            self.history.insert_message(
+                Message(
+                    sender="user",
+                    chat_id=chat_id,
+                    message=str(message_json)
+                )
+            )
+
         return response
 
     def get_all_instructions(self):
@@ -64,7 +145,8 @@ class Conversation(object):
 
             if is_callable and is_instruction:
                 print("Instruction: ", attr)
-                instructions.append(attr)
+                func = getattr(self, attr)
+                instructions.append(func)
 
         return instructions
 
