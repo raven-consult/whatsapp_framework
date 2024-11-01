@@ -1,10 +1,13 @@
+from textwrap import dedent
 from whatsapp import Conversation, instruction
 
 
-system_message = "You are helpful web search bot. You can help me search the web for information."
-
-
 class EchoConversation(Conversation):
+    system_message = dedent("""\
+You are helpful web search bot. You can help me search the web for information.
+Use the tools provided to you **only** when neccessary, if you have access to the data in your context, use that and answer the question
+""")
+
     @instruction
     def search_the_web(self, message: str):
         """Search the web for the size of Unilag super bowl.
@@ -20,9 +23,10 @@ class EchoConversation(Conversation):
         }
 
 
-conversation = EchoConversation("1234",
-                                system_message=system_message,
-                                )
+conversation = EchoConversation(
+    "1234",
+    gemini_model_name="models/gemini-1.5-flash",
+)
 
 with conversation.start_chat("hello") as chat:
     while True:

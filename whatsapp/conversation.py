@@ -1,8 +1,11 @@
+from typing import Iterable
 from functools import wraps
 from contextlib import contextmanager
 
 import os
 import google.generativeai as genai
+from google.generativeai.types.model_types import json
+from google.generativeai.types import StrictContentType
 from google.protobuf.json_format import MessageToJson, MessageToDict
 
 from whatsapp._history import Message, ConversationHistory
@@ -19,15 +22,15 @@ def instruction(func):
 
 
 class Conversation(object):
+    system_message = ""
+
     def __init__(
             self,
             conversation_id: str,
-            system_message: str | None = None,
             gemini_model_name: str = "models/gemini-1.5-flash",
             gemini_api_key: str = os.environ.get("GEMINI_API_KEY", ""),
     ):
         self.model_name = gemini_model_name
-        self.system_message = system_message
         genai.configure(api_key=gemini_api_key)
         self.instructions = self.get_all_instructions()
         self.history = ConversationHistory(conversation_id)
@@ -49,26 +52,49 @@ class Conversation(object):
 
     def handler(self, chat_id, message: str):
         model = self.model()
-        history = self.history.get_messages(chat_id)
+        history_data = self.history.get_messages(chat_id)
 
         response = ""
         if message == "end":
             response = "Goodbye"
 
-        session = model.start_chat(
-            history=[
-                {
+        history: Iterable[StrictContentType] = []
+        # res_part = genai.protos.Part(function_response=genai.protos.FunctionResponse(
+        #             name=fn.name, response={"result": res}))
+
+        for m in history_data:
+            if m.type == "text":
+                history.append({
                     "role": "user" if m.sender == "user" else "model",
-                    "parts": [m.message],
-                } for m in history
-            ]
+                    "parts": [genai.protos.Part(text=m.data)],
+                })
+            elif m.type == "function_call":
+                function_call = json.loads(m.data)["functionCall"]
+                history.append({
+                    "role": "user" if m.sender == "user" else "model",
+                    "parts": [genai.protos.Part(function_call=genai.protos.FunctionCall(
+                        name=function_call["name"], args=function_call["args"]))]
+                })
+            elif m.type == "function_response":
+                function_response = json.loads(m.data)
+                history.append({
+                    "role": "user" if m.sender == "user" else "model",
+                    "parts": [genai.protos.Part(function_response=genai.protos.FunctionResponse(
+                        name=f["functionResponse"]["name"], response=f["functionResponse"]["response"])) for f in function_response]
+                })
+
+        print(history)
+
+        session = model.start_chat(
+            history=history,  # type: ignore
         )
 
         self.history.insert_message(
             Message(
+                type="text",
                 chat_id=chat_id,
                 sender="user",
-                message=message,
+                data=message,
             )
         )
 
@@ -92,9 +118,10 @@ class Conversation(object):
 
                     self.history.insert_message(
                         Message(
-                            chat_id=chat_id,
                             sender="bot",
-                            message=response,
+                            data=response,
+                            chat_id=chat_id,
+                            type="function_call",
                         )
                     )
                 else:
@@ -102,9 +129,10 @@ class Conversation(object):
                     end_loop = True
                     self.history.insert_message(
                         Message(
-                            chat_id=chat_id,
+                            type="text",
                             sender="bot",
-                            message=response,
+                            data=response,
+                            chat_id=chat_id,
                         )
                     )
 
@@ -123,16 +151,17 @@ class Conversation(object):
 
                 responses.append(res_part)
 
-            message_json = [MessageToDict(r._pb)
-                            for r in responses]  # type: ignore
-
-            self.history.insert_message(
-                Message(
-                    sender="user",
-                    chat_id=chat_id,
-                    message=str(message_json)
+            if responses:
+                message_json = [MessageToDict(r._pb)
+                                for r in responses]  # type: ignore
+                self.history.insert_message(
+                    Message(
+                        sender="user",
+                        chat_id=chat_id,
+                        type="function_response",
+                        data=json.dumps(message_json)
+                    )
                 )
-            )
 
         return response
 
