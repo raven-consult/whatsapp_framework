@@ -1,15 +1,16 @@
 import os
 import logging
-from typing import Iterable
 from functools import wraps
+from typing import Iterable, List
 from contextlib import contextmanager
 
 import google.generativeai as genai
 from google.generativeai.types.model_types import json
-from google.generativeai.types import StrictContentType
 from google.protobuf.json_format import MessageToJson, MessageToDict
+from google.generativeai.types import GenerateContentResponse, StrictContentType
 
 from whatsapp._history import Message, ConversationHistory
+
 
 logger = logging.getLogger(__name__)
 
@@ -33,54 +34,50 @@ class AgentInterface(object):
             gemini_api_key: str = os.environ.get("GEMINI_API_KEY", ""),
     ):
         self.model_name = gemini_model_name
+        self.history = ConversationHistory()
         genai.configure(api_key=gemini_api_key)
         self.instructions = self.get_all_instructions()
-        self.history = ConversationHistory("djdk")
 
-    def model(self):
-        generation_config = {
-            "top_k": 64,
-            "top_p": 0.95,
-            "temperature": 1,
-            "max_output_tokens": 8192,
-            "response_mime_type": "text/plain",
-        }
-
+    def model(self, config=None):
         return genai.GenerativeModel(
             tools=self.instructions,
             model_name=self.model_name,
             system_instruction=self.system_message,
         )
 
+    def _setup_history_data(self, history_data: List[Message]) -> Iterable[StrictContentType]:
+        """Converts conversation history into a structured format for the model."""
+
+        history = []
+        for message in history_data:
+            role = "user" if message.sender == "user" else "model"
+            if message.type == "text":
+                history.append(
+                    {"role": role, "parts": [genai.protos.Part(text=message.data)]})
+            elif message.type == "function_call":
+                function_call = json.loads(message.data)["functionCall"]
+                history.append({
+                    "role": role,
+                    "parts": [genai.protos.Part(function_call=genai.protos.FunctionCall(
+                        name=function_call["name"], args=function_call["args"]
+                    ))]
+                })
+            elif message.type == "function_response":
+                function_responses = json.loads(message.data)
+                parts = [
+                    genai.protos.Part(function_response=genai.protos.FunctionResponse(
+                        name=resp["functionResponse"]["name"], response=resp["functionResponse"]["response"]
+                    )) for resp in function_responses
+                ]
+                history.append({"role": role, "parts": parts})
+        return history
+
     def handler(self, chat_id, message: str):
         model = self.model()
         history_data = self.history.get_messages(chat_id)
-
-        response = ""
-        history: Iterable[StrictContentType] = []
-
-        for m in history_data:
-            if m.type == "text":
-                history.append({
-                    "role": "user" if m.sender == "user" else "model",
-                    "parts": [genai.protos.Part(text=m.data)],
-                })
-            elif m.type == "function_call":
-                function_call = json.loads(m.data)["functionCall"]
-                history.append({
-                    "role": "user" if m.sender == "user" else "model",
-                    "parts": [genai.protos.Part(function_call=genai.protos.FunctionCall(
-                        name=function_call["name"], args=function_call["args"]))]
-                })
-            elif m.type == "function_response":
-                function_response = json.loads(m.data)
-                history.append({
-                    "role": "user" if m.sender == "user" else "model",
-                    "parts": [genai.protos.Part(function_response=genai.protos.FunctionResponse(
-                        name=f["functionResponse"]["name"], response=f["functionResponse"]["response"])) for f in function_response]
-                })
-
+        history = self._setup_history_data(history_data)
         session = model.start_chat(history=history)
+
         self.history.insert_message(
             Message(
                 type="text",
@@ -90,75 +87,91 @@ class AgentInterface(object):
             )
         )
 
-        responses = None
+        response = ""
         end_loop = False
+        function_call_response = None
+
         while not end_loop:
-            if responses:
-                res = session.send_message(responses)
+            if function_call_response:
+                res = session.send_message(function_call_response)
             else:
                 res = session.send_message(message)
 
-            fns = []
-            for part in res.parts:
-                if part.function_call:
-                    fn = part.function_call
-                    args = ", ".join(f"{key}={val}" for key,
-                                     val in fn.args.items())
-                    logger.debug(f"Function call: {fn.name}({args})")
-                    fns.append(fn)
-                    response = MessageToJson(part._pb)
-
-                    self.history.insert_message(
-                        Message(
-                            sender="bot",
-                            data=response,
-                            chat_id=chat_id,
-                            type="function_call",
-                        )
-                    )
-                else:
-                    response = part.text
-                    end_loop = True
-                    self.history.insert_message(
-                        Message(
-                            type="text",
-                            sender="bot",
-                            data=response,
-                            chat_id=chat_id,
-                        )
-                    )
+            fns, response, end_loop = self._process_response(chat_id, res)
 
             if any(fn.name == "end_chat" for fn in fns):
                 break
 
-            responses = []
-
+            function_call_response = []
             for fn in fns:
-                func = getattr(self, fn.name)
-                res = func(**fn.args)
+                res_part = self._call_function(fn)
+                function_call_response.append(res_part)
 
-                # Build the response parts.
-                res_part = genai.protos.Part(function_response=genai.protos.FunctionResponse(
-                    name=fn.name, response={"result": res}))
-
-                responses.append(res_part)
-
-            if responses:
-                message_json = [MessageToDict(r._pb)
-                                for r in responses]  # type: ignore
+            if function_call_response:
+                # Save responses to history
+                responses_json = [MessageToDict(r._pb)
+                                  for r in function_call_response]  # type: ignore
                 self.history.insert_message(
                     Message(
                         sender="user",
                         chat_id=chat_id,
                         type="function_response",
-                        data=json.dumps(message_json)
+                        data=json.dumps(responses_json)
                     )
                 )
 
         return response
 
+    def _call_function(self, fn):
+        # Call the function and get the response
+        func = getattr(self, fn.name)
+        res = func(**fn.args)
+
+        # Build the response parts.
+        res_part = genai.protos.Part(function_response=genai.protos.FunctionResponse(
+            name=fn.name, response={"result": res}))
+
+        return res_part
+
+    def _process_response(self, chat_id: int, res: GenerateContentResponse):
+        fns = []
+        response = ""
+        end_loop = False
+
+        for part in res.parts:
+            if part.function_call:
+                fn = part.function_call
+                args = ", ".join(f"{key}={val}" for key,
+                                 val in fn.args.items())
+                logger.debug(
+                    f"Model declare a function call: {fn.name}({args})")
+                fns.append(fn)
+                response = MessageToJson(part._pb)
+
+                self.history.insert_message(
+                    Message(
+                        sender="bot",
+                        data=response,
+                        chat_id=chat_id,
+                        type="function_call",
+                    )
+                )
+            else:
+                response = part.text
+                end_loop = True
+                self.history.insert_message(
+                    Message(
+                        type="text",
+                        sender="bot",
+                        data=response,
+                        chat_id=chat_id,
+                    )
+                )
+        return fns, response, end_loop
+
     def get_all_instructions(self):
         instructions = []
+
         for attr in dir(self):
             is_callable = callable(getattr(self, attr))
             is_instruction = getattr(

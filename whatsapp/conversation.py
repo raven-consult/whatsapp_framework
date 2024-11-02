@@ -11,7 +11,7 @@ from whatsapp.conversation_handler import ConversationHandler
 from whatsapp.reply_message import Message as ReplyMessage, Text
 
 
-logger = logging.getLogger()
+logger = logging.getLogger("whatsapp")
 
 TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
 WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
@@ -34,9 +34,9 @@ class Conversation(AgentInterface, ConversationHandler):
         self.webhook_initialize_string = webhook_initialize_string
 
         self.model_name = gemini_model_name
+        self.history = ConversationHistory()
         genai.configure(api_key=gemini_api_key)
         self.instructions = self.get_all_instructions()
-        self.history = ConversationHistory("kdkd")
 
         if debug:
             ch = logging.StreamHandler()

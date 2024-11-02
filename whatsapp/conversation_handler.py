@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
 WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
+NGROK_AUTH_TOKEN = os.environ.get("NGROK_AUTH_TOKEN", "")
 
 
 class ConversationHandler(object):
@@ -47,8 +48,6 @@ class ConversationHandler(object):
         logger.debug("Listening for new messages...")
         while True:
             message = self.queue.get(block=True)
-            logger.debug(f"Received message: %s", message)
-
             self.on_message(message)
 
     def on_message(self, message: Message):
@@ -58,7 +57,7 @@ class ConversationHandler(object):
         if change.field == "messages":
             if change.value.messages:
                 for message in change.value.messages:
-                    logger.debug("Received message: %s", message)
+                    logger.debug("Received text message: %s", message)
                     data = Message(
                         message=message,
                         to=message.from_,
@@ -71,7 +70,7 @@ class ConversationHandler(object):
         if change.field == "messages":
             if change.value.messages:
                 for message in change.value.messages:
-                    logger.debug("Received message: %s", message)
+                    logger.debug("Received media message: %s", message)
                     if message.type in ["image", "audio", "video", "document"]:
                         data = getattr(message, message.type)
                         logger.debug("Downloading media...")
@@ -94,16 +93,9 @@ class ConversationHandler(object):
                 pass
 
     def _handle_verification(self, request: Request, webhook_initialize_string: str):
-        print("Handling verification...")
-
         hub_mode = request.args.get("hub.mode", "")
         hub_challenge = request.args.get("hub.challenge", "")
         hub_verify_token = request.args.get("hub.verify_token", "")
-
-        logging.debug("Hub challenge: %s", hub_challenge)
-        logging.debug("Hub verify token: %s", hub_verify_token)
-        logging.debug("Webhook initialize string: %s",
-                      webhook_initialize_string)
 
         if hub_mode == "subscribe" and hub_verify_token == webhook_initialize_string:
             return Response(hub_challenge, 200)
@@ -111,21 +103,17 @@ class ConversationHandler(object):
             return Response("Verification failed", 403)
 
     def create_server(self, q: Queue, host: str, port: int) -> None:
-        logging.debug("Creating server...")
+        logging.info("Creating server...")
 
         @Request.application
         def app(request: Request) -> Response:
             if request.method == "GET":
-                logging.debug("Received GET request")
-
+                logger.debug("Handling verification...")
                 return self._handle_verification(
                     request, self.webhook_initialize_string)
             elif request.method == "POST":
                 try:
-                    logger.debug("################################")
                     data = request.get_json()
-                    logger.debug("Data: %s", data)
-
                     data = WhatsappEvent(**data)
                     data = data.entry[0]
 
@@ -140,23 +128,27 @@ class ConversationHandler(object):
                     return Response("Error", 500)
                 finally:
                     pass
-                    logger.debug("################################")
-                    logger.debug("")
             return Response("", 200)
 
         logging.debug("Starting server...")
 
         if self.start_proxy:
-            public_url = ngrok.connect(str(port))
-            logger.info(
-                f" * %s", public_url)
-            logger.info(" * Use %s as the webhook verify token",
-                        self.webhook_initialize_string)
+            self._setup_ngrok(port)
 
         server = make_server(
             host, port, app,
+            threaded=True, processes=1
         )
         server.serve_forever()
+
+    def _setup_ngrok(self, port: int):
+        ngrok.set_auth_token(NGROK_AUTH_TOKEN)
+
+        public_url = ngrok.connect(str(port))
+        logger.info(
+            f" * %s", public_url)
+        logger.info(" * Use %s as the webhook verify token",
+                    self.webhook_initialize_string)
 
     def _download_media(self, media_id: str, mime_type: str):
         response = requests.get(
@@ -227,6 +219,6 @@ class ConversationHandler(object):
         return True
 
     def start(self, port: int = 5000, host="localhost"):
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        with ThreadPoolExecutor() as executor:
             executor.submit(self._handle_new_message)
             executor.submit(lambda: self.create_server(self.queue, host, port))
