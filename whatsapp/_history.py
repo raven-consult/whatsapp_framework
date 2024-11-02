@@ -18,7 +18,7 @@ class ConversationHistory:
 
     def __init__(self, conversation_id: str, db_name: str = "chat.db"):
         self.conversation_id = conversation_id
-        self.conn = sqlite3.connect(db_name)
+        self.conn = sqlite3.connect(db_name, check_same_thread=False)
         self.cursor = self.conn.cursor()
         self.create_table()
 

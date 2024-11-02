@@ -2,7 +2,6 @@ import os
 import logging
 from queue import Queue
 from pathlib import Path
-from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -13,7 +12,6 @@ from werkzeug.serving import make_server
 from whatsapp.utils import mime_to_extension
 from whatsapp.reply_message import Message as ReplyMessage
 from whatsapp.events import Change, WhatsappEvent, Message
-from whatsapp._handle_verfication import handle_verification
 
 
 logger = logging.getLogger(__name__)
@@ -22,21 +20,18 @@ TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
 WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
 
 
-class ChatHandler(ABC):
+class ConversationHandler(object):
     queue: Queue[Message] = Queue()
     url = "https://graph.facebook.com/v20.0"
 
     def __init__(
             self,
-            port=5000,
             start_proxy=True,
             token: str = TOKEN,
             media_root: str = "media",
             webhook_initialize_string="token",
             whatsapp_number: str = WHATSAPP_NUMBER,
-
     ):
-        self.port = port
         self.token = token
         self.media_root = media_root
         self.start_proxy = start_proxy
@@ -49,13 +44,13 @@ class ChatHandler(ABC):
             raise ValueError("token is required")
 
     def _handle_new_message(self):
+        logger.debug("Listening for new messages...")
         while True:
             message = self.queue.get(block=True)
             logger.debug(f"Received message: %s", message)
 
             self.on_message(message)
 
-    @abstractmethod
     def on_message(self, message: Message):
         pass
 
@@ -83,13 +78,14 @@ class ChatHandler(ABC):
                         mime_type = data.mime_type.split(";")[0]
                         file = self._download_media(data.id, mime_type)
                         message.file = file
-                    data = Message(
-                        message=message,
-                        to=message.from_,
-                        type=message.type,
-                        contacts=change.value.contacts if change.value.contacts else [],
-                    )
-                    queue.put(data)
+
+                        data = Message(
+                            message=message,
+                            to=message.from_,
+                            type=message.type,
+                            contacts=change.value.contacts if change.value.contacts else [],
+                        )
+                        queue.put(data)
 
     def _handle_status_message(self, change: Change, queue: Queue):
         if change.field == "messages":
@@ -97,11 +93,33 @@ class ChatHandler(ABC):
                 # Ignore for now
                 pass
 
+    def _handle_verification(self, request: Request, webhook_initialize_string: str):
+        print("Handling verification...")
+
+        hub_mode = request.args.get("hub.mode", "")
+        hub_challenge = request.args.get("hub.challenge", "")
+        hub_verify_token = request.args.get("hub.verify_token", "")
+
+        logging.debug("Hub challenge: %s", hub_challenge)
+        logging.debug("Hub verify token: %s", hub_verify_token)
+        logging.debug("Webhook initialize string: %s",
+                      webhook_initialize_string)
+
+        if hub_mode == "subscribe" and hub_verify_token == webhook_initialize_string:
+            return Response(hub_challenge, 200)
+        else:
+            return Response("Verification failed", 403)
+
     def create_server(self, q: Queue, host: str, port: int) -> None:
+        logging.debug("Creating server...")
+
         @Request.application
         def app(request: Request) -> Response:
             if request.method == "GET":
-                handle_verification(request, self.webhook_initialize_string)
+                logging.debug("Received GET request")
+
+                return self._handle_verification(
+                    request, self.webhook_initialize_string)
             elif request.method == "POST":
                 try:
                     logger.debug("################################")
@@ -126,16 +144,17 @@ class ChatHandler(ABC):
                     logger.debug("")
             return Response("", 200)
 
+        logging.debug("Starting server...")
+
         if self.start_proxy:
             public_url = ngrok.connect(str(port))
             logger.info(
-                f" * ngrok tunnel %s -> %s", public_url, f"http://{host}:{port}")
+                f" * %s", public_url)
             logger.info(" * Use %s as the webhook verify token",
                         self.webhook_initialize_string)
 
         server = make_server(
             host, port, app,
-            threaded=True, processes=4
         )
         server.serve_forever()
 
@@ -207,7 +226,7 @@ class ChatHandler(ABC):
         logger.debug("Response: %s", response.json())
         return True
 
-    def start(self, host="localhost", port=5000):
+    def start(self, port: int = 5000, host="localhost"):
         with ThreadPoolExecutor(max_workers=2) as executor:
             executor.submit(self._handle_new_message)
             executor.submit(lambda: self.create_server(self.queue, host, port))

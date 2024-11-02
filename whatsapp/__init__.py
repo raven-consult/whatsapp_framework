@@ -1,4 +1,5 @@
-from whatsapp.conversation import Conversation, instruction
+from whatsapp.conversation import Conversation
+from whatsapp.agent_interface import instruction
 
 __all__ = [
     "instruction",

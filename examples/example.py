@@ -24,16 +24,14 @@ Use the tools provided to you **only** when neccessary, if you have access to th
 
 
 conversation = EchoConversation(
-    "1234",
     gemini_model_name="models/gemini-1.5-flash",
 )
 
-with conversation.start_chat("hello") as chat:
-    while True:
-        message = input("Enter your message: ")
-        response = chat(message)
 
-        print(response)
+def main():
+    chat_handler = EchoConversation(debug=True, start_proxy=False)
+    chat_handler.start(5000)
 
-        if response == "Goodbye":
-            break
+
+if __name__ == "__main__":
+    main()
