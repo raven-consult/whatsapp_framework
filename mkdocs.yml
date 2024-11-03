@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://squidfunk.github.io/mkdocs-material/schema.json
+
+site_name: Whatsapp framework
+site_url: https://raven-consult.github.io/whatsapp-framework
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - content.code.select
+    - navigation.tabs
+    - navigation.tracking
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+
+nav:
+  - Home:
+    - index.md
+    - Setup Whatsapp: setup_whatsapp.md
+  - Whatsapp:
+    - whatsapp/index.md

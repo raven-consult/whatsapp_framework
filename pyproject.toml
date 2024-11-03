@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "whatsapp-framework"
-version = "0.1.12"
+version = "0.1.21"
 description = "Whatsapp framework simplifies building and deploying whatsapp based application"
 authors = ["Damian Akpan <damiakpan@gmail.com>"]
 readme = "README.md"
@@ -30,6 +30,9 @@ pydantic = "^2.9.1"
 werkzeug = "^3.0.4"
 google-generativeai = "^0.8.3"
 
+
+[tool.poetry.group.docs.dependencies]
+mkdocs-material = "^9.5.43"
 
 [build-system]
 requires = ["poetry-core"]
