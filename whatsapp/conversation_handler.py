@@ -119,7 +119,7 @@ class ConversationHandler(BaseInterface, ABC):
             """
             SELECT id, start_time, end_time, intent
             FROM whatsapp_conversations
-            WHERE customer_id=?
+            WHERE customer_id=? AND end_time IS NULL
             ORDER BY id DESC
             LIMIT 1
             """,
@@ -243,13 +243,6 @@ class ConversationHandler(BaseInterface, ABC):
             raise e
 
     def _handle_text_message(self, change: Change, queue: Queue):
-        conversation = self.get_current_conversation(
-            change.value.metadata.phone_number_id)
-        if not conversation:
-            conversation = self.start_conversation(
-                change.value.metadata.phone_number_id,
-                int(datetime.now().timestamp()),
-            )
 
         if change.field == "messages":
             if change.value.messages:
@@ -262,6 +255,14 @@ class ConversationHandler(BaseInterface, ABC):
                         contacts=change.value.contacts if change.value.contacts else [],
                     )
 
+                    conversation = self.get_current_conversation(
+                        message.from_)
+                    if not conversation:
+                        conversation = self.start_conversation(
+                            message.from_,
+                            int(datetime.now().timestamp()),
+                        )
+
                     val = message.text.body if message.text else ""
                     self.add_message(
                         conversation.id,
@@ -272,14 +273,6 @@ class ConversationHandler(BaseInterface, ABC):
                     queue.put(data)
 
     def _handle_media_message(self, change: Change, queue: Queue):
-        conversation = self.get_current_conversation(
-            change.value.metadata.phone_number_id)
-        if not conversation:
-            conversation = self.start_conversation(
-                change.value.metadata.phone_number_id,
-                int(datetime.now().timestamp()),
-            )
-
         if change.field == "messages":
             if change.value.messages:
                 for message in change.value.messages:
@@ -299,6 +292,13 @@ class ConversationHandler(BaseInterface, ABC):
                         )
 
                         # TODO: Storage of media messages
+                        conversation = self.get_current_conversation(
+                            message.from_)
+                        if not conversation:
+                            conversation = self.start_conversation(
+                                message.from_,
+                                int(datetime.now().timestamp()),
+                            )
 
                         queue.put(data)
 
