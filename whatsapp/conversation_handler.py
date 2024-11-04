@@ -9,6 +9,7 @@ from pyngrok import ngrok
 from werkzeug import Request, Response
 from werkzeug.serving import make_server
 
+from whatsapp._types import BaseInterface
 from whatsapp.utils import mime_to_extension
 from whatsapp.reply_message import Message as ReplyMessage
 from whatsapp.events import Change, WhatsappEvent, Message
@@ -21,28 +22,28 @@ WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
 NGROK_AUTH_TOKEN = os.environ.get("NGROK_AUTH_TOKEN", "")
 
 
-class ConversationHandler(object):
+class ConversationHandler(BaseInterface):
     queue: Queue[Message] = Queue()
     url = "https://graph.facebook.com/v20.0"
+
+    token: str = TOKEN
+    whatsapp_number: str = WHATSAPP_NUMBER
 
     def __init__(
             self,
             start_proxy=True,
-            token: str = TOKEN,
             media_root: str = "media",
             webhook_initialize_string="token",
-            whatsapp_number: str = WHATSAPP_NUMBER,
     ):
-        self.token = token
         self.media_root = media_root
         self.start_proxy = start_proxy
-        self.whatsapp_number = whatsapp_number
         self.webhook_initialize_string = webhook_initialize_string
 
         if not self.whatsapp_number:
-            raise ValueError("whatsapp_number is required")
+            raise ValueError(
+                "whatsapp_number is required but not defined in class")
         if not self.token:
-            raise ValueError("token is required")
+            raise ValueError("token is required but not defined in class")
 
     def _handle_new_message(self):
         logger.debug("Listening for new messages...")
