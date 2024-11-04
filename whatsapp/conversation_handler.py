@@ -63,7 +63,7 @@ class ConversationHandler(BaseInterface, ABC):
         self.media_root = media_root
         self.start_proxy = start_proxy
         self.webhook_initialize_string = webhook_initialize_string
-        self.create_table()
+        self.create_whatsapp_conversation_tables()
 
         if not self.whatsapp_number:
             raise ValueError(
@@ -81,7 +81,7 @@ class ConversationHandler(BaseInterface, ABC):
     def on_message(self, message: Message):
         pass
 
-    def create_table(self):
+    def create_whatsapp_conversation_tables(self):
         conn = self.get_connection()
         cursor = conn.cursor()
 
