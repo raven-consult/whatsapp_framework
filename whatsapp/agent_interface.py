@@ -1,18 +1,30 @@
 import os
 import logging
 from functools import wraps
-from typing import Iterable, List
+from dataclasses import dataclass
 from contextlib import contextmanager
+from typing import Iterable, List, Literal
 
 import google.generativeai as genai
 from google.generativeai.types.model_types import json
 from google.protobuf.json_format import MessageToJson, MessageToDict
 from google.generativeai.types import GenerateContentResponse, StrictContentType
 
-from whatsapp._history import Message, ConversationHistory
+from whatsapp._types import BaseInterface
 
 
 logger = logging.getLogger(__name__)
+
+MessageTypes = Literal["text", "function_call", "function_response"]
+
+
+@dataclass
+class Message:
+    chat_id: int
+    sender: str
+    data: str
+    id: int | None = None
+    type: MessageTypes = "text"
 
 
 def instruction(func):
@@ -25,7 +37,7 @@ def instruction(func):
     return wrapper
 
 
-class AgentInterface(object):
+class AgentInterface(BaseInterface):
     system_message = ""
 
     def __init__(
@@ -34,9 +46,10 @@ class AgentInterface(object):
             gemini_api_key: str = os.environ.get("GEMINI_API_KEY", ""),
     ):
         self.model_name = gemini_model_name
-        self.history = ConversationHistory()
-        genai.configure(api_key=gemini_api_key)
         self.instructions = self.get_all_instructions()
+
+        genai.configure(api_key=gemini_api_key)
+        self.create_table()
 
     def model(self, config=None):
         return genai.GenerativeModel(
@@ -72,13 +85,78 @@ class AgentInterface(object):
                 history.append({"role": role, "parts": parts})
         return history
 
+    def create_table(self):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        logging.debug("Creating table")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                sender TEXT NOT NULL,
+                data TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+
+    def insert_message(self, message: Message):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                """
+                INSERT INTO messages
+                (conversation_id, type, sender, data)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    message.chat_id,
+                    message.type,
+                    message.sender,
+                    message.data,
+                )
+            )
+            conn.commit()
+        except Exception as e:
+            logging.error(e)
+            raise e
+
+    def get_messages(self, chat_id: str):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT id, conversation_id, type, sender, data
+            FROM messages
+            WHERE conversation_id=?
+            """,
+            (chat_id,),
+        )
+        res = cursor.fetchall()
+
+        return [
+            Message(
+                id=r[0],
+                chat_id=r[1],
+                type=r[2],
+                sender=r[3],
+                data=r[4],
+            ) for r in res
+        ]
+
     def handler(self, chat_id, message: str):
         model = self.model()
-        history_data = self.history.get_messages(chat_id)
+        history_data = self.get_messages(chat_id)
         history = self._setup_history_data(history_data)
         session = model.start_chat(history=history)
 
-        self.history.insert_message(
+        self.insert_message(
             Message(
                 type="text",
                 data=message,
@@ -111,7 +189,7 @@ class AgentInterface(object):
                 # Save responses to history
                 responses_json = [MessageToDict(r._pb)
                                   for r in function_call_response]  # type: ignore
-                self.history.insert_message(
+                self.insert_message(
                     Message(
                         sender="user",
                         chat_id=chat_id,
@@ -148,7 +226,7 @@ class AgentInterface(object):
                 fns.append(fn)
                 response = MessageToJson(part._pb)
 
-                self.history.insert_message(
+                self.insert_message(
                     Message(
                         sender="bot",
                         data=response,
@@ -159,7 +237,7 @@ class AgentInterface(object):
             else:
                 response = part.text
                 end_loop = True
-                self.history.insert_message(
+                self.insert_message(
                     Message(
                         type="text",
                         sender="bot",

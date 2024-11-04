@@ -1,11 +1,9 @@
 import os
+import sqlite3
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
-import google.generativeai as genai
-
 from whatsapp.events import Message
-from whatsapp._history import ConversationHistory
 from whatsapp.agent_interface import AgentInterface
 from whatsapp.conversation_handler import ConversationHandler
 from whatsapp.reply_message import Message as ReplyMessage, Text
@@ -20,7 +18,6 @@ WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
 class Conversation(AgentInterface, ConversationHandler):
     def __init__(
             self,
-            port=5000,
             debug=False,
             start_proxy=True,
             media_root: str = "media",
@@ -28,15 +25,17 @@ class Conversation(AgentInterface, ConversationHandler):
             gemini_model_name: str = "models/gemini-1.5-flash",
             gemini_api_key: str = os.environ.get("GEMINI_API_KEY", ""),
     ):
-        self.port = port
-        self.media_root = media_root
-        self.start_proxy = start_proxy
-        self.webhook_initialize_string = webhook_initialize_string
-
-        self.model_name = gemini_model_name
-        self.history = ConversationHistory()
-        genai.configure(api_key=gemini_api_key)
-        self.instructions = self.get_all_instructions()
+        AgentInterface.__init__(
+            self,
+            gemini_model_name,
+            gemini_api_key
+        )
+        ConversationHandler.__init__(
+            self,
+            start_proxy,
+            media_root,
+            webhook_initialize_string,
+        )
 
         if debug:
             ch = logging.StreamHandler()
@@ -46,6 +45,9 @@ class Conversation(AgentInterface, ConversationHandler):
             ch.setFormatter(formatter)
             logger.addHandler(ch)
             logger.setLevel(logging.DEBUG)
+
+    def get_connection(self):
+        return sqlite3.connect("conversation.db")
 
     def on_message(self, message: Message):
         chat_id = message.to
