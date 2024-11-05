@@ -1,5 +1,4 @@
 import os
-import sqlite3
 import logging
 from concurrent.futures import ThreadPoolExecutor
 

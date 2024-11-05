@@ -5,10 +5,7 @@ from abc import ABC, abstractmethod
 
 
 class BaseInterface(ABC):
-
-    @abstractmethod
-    def get_connection(self) -> sqlite3.Connection:
-        pass
+    pass
 
 
 @dataclass
