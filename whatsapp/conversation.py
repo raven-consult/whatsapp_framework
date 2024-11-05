@@ -57,11 +57,12 @@ class Conversation(AgentInterface, ConversationHandler):
             else ""
         )
 
-        res = self.handler(chat_id, text)
+        res, end_chat = self.handler(chat_id, text)
         data = Text(
             body=res,
             preview_url=False,
         )
+
         reply = ReplyMessage(
             text=data,
             to=chat_id,
