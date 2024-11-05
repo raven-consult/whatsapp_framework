@@ -19,6 +19,9 @@ class BaseDatastore:
     def create_conversation(self, customer_id: str, start_time: int) -> ConversationData:
         raise NotImplementedError
 
+    def end_conversation(self, customer_id: str, timestamp: int):
+        raise NotImplementedError
+
     def add_chat_message(self, conversation_id: str, sender: str, timestamp: int, message: str):
         raise NotImplementedError
 
@@ -116,6 +119,17 @@ class SQLiteDatastore(BaseDatastore):
         )
         res = self.cursor.fetchone()
         return res
+
+    def end_conversation(self, customer_id: str, timestamp: int):
+        self.cursor.execute(
+            """
+            UPDATE conversations
+            SET end_time=?
+            WHERE customer_id=? AND end_time IS NULL
+            """,
+            (timestamp, customer_id)
+        )
+        self.conn.commit()
 
     def add_chat_message(self, conversation_id: str, sender: str, timestamp: int, message: str):
         self.cursor.execute(

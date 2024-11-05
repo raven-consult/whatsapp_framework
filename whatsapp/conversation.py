@@ -46,9 +46,6 @@ class Conversation(AgentInterface, ConversationHandler):
             logger.addHandler(ch)
             logger.setLevel(logging.DEBUG)
 
-    def get_connection(self):
-        return sqlite3.connect("conversation.db")
-
     def on_message(self, message: Message):
         chat_id = message.to
         text = (
@@ -57,10 +54,11 @@ class Conversation(AgentInterface, ConversationHandler):
             else ""
         )
 
-        res, end_chat = self.handler(chat_id, text)
+        res = self.handler(chat_id, text)
         data = Text(
             body=res,
             preview_url=False,
+
         )
 
         reply = ReplyMessage(

@@ -61,7 +61,6 @@ class ConversationHandler(BaseInterface, ABC):
         pass
 
     def _handle_text_message(self, change: Change, queue: Queue):
-
         if change.field == "messages":
             if change.value.messages:
                 for message in change.value.messages:
@@ -230,6 +229,10 @@ class ConversationHandler(BaseInterface, ABC):
         return data["id"]
 
     def send(self, message: ReplyMessage):
+        conversation = self.datastore.get_current_conversation(message.to)
+        assert conversation, "Attempted to send message without active conversation"
+
+        # Check if message has media and upload it
         if message.type in ["audio", "video", "document", "image", "sticker"]:
             media = getattr(message, message.type)
             filename_id = self._upload_media(
@@ -240,9 +243,6 @@ class ConversationHandler(BaseInterface, ABC):
             del media.mime_type
             setattr(message, message.type, media)
 
-        conversation = self.datastore.get_current_conversation(message.to)
-        if not conversation:
-            raise ValueError("No active conversation found")
 
         timestamp = int(datetime.now().timestamp())
         data = message.text.body if message.text else ""

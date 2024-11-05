@@ -1,8 +1,9 @@
 import os
 import logging
 from functools import wraps
+from datetime import datetime
+from typing import Iterable, List
 from contextlib import contextmanager
-from typing import Iterable, List, Tuple
 
 import google.generativeai as genai
 from google.generativeai.types.model_types import json
@@ -83,7 +84,7 @@ class AgentInterface(BaseInterface):
                 history.append({"role": role, "parts": parts})
         return history
 
-    def handler(self, conversation_id, message: str) -> Tuple[str, bool]:
+    def handler(self, conversation_id, message: str) -> str:
         """Handle the chat messages and return the response and whether the chat has ended."""
 
         model = self.model()
@@ -92,15 +93,14 @@ class AgentInterface(BaseInterface):
         session = model.start_chat(history=history)
 
         self.datastore.add_agent_message(
-            conversation_id=conversation_id,
             type="text",
             data=message,
             sender="customer",
+            conversation_id=conversation_id,
         )
 
         response = ""
         end_loop = False
-        end_chat = False
         function_call_response = None
 
         while not end_loop:
@@ -109,7 +109,7 @@ class AgentInterface(BaseInterface):
             else:
                 res = session.send_message(message)
 
-            fns, response, end_loop, end_chat = self._process_response(
+            fns, response, end_loop = self._process_response(
                 conversation_id, res)
 
             function_call_response = []
@@ -121,6 +121,7 @@ class AgentInterface(BaseInterface):
                 # Save responses to history
                 responses_json = [MessageToDict(r._pb)
                                   for r in function_call_response]  # type: ignore
+
                 self.datastore.add_agent_message(
                     sender="customer",
                     type="function_response",
@@ -128,7 +129,7 @@ class AgentInterface(BaseInterface):
                     conversation_id=conversation_id,
                 )
 
-        return response, end_chat
+        return response
 
     def _call_function(self, fn):
         # Call the function and get the response
@@ -145,7 +146,6 @@ class AgentInterface(BaseInterface):
         fns = []
         response = ""
         end_loop = False
-        end_chat = False
 
         for part in res.parts:
             if part.function_call:
@@ -153,7 +153,7 @@ class AgentInterface(BaseInterface):
                 args = ", ".join(f"{key}={val}" for key,
                                  val in fn.args.items())
                 logger.debug(
-                    f"Model declare a function call: {fn.name}({args})")
+                    f"Model declared a function call: {fn.name}({args})")
                 fns.append(fn)
                 response = MessageToJson(part._pb)
 
@@ -170,8 +170,9 @@ class AgentInterface(BaseInterface):
                 end_loop = True
 
                 if "<END />" in response:
-                    end_chat = True
                     response = response.replace("<END />", "")
+                    timestamp = int(datetime.now().timestamp())
+                    self.datastore.end_conversation(conversation_id, timestamp)
 
                 self.datastore.add_agent_message(
                     type="text",
@@ -179,10 +180,7 @@ class AgentInterface(BaseInterface):
                     data=response,
                     conversation_id=conversation_id,
                 )
-        return fns, response, end_loop, end_chat
-
-    def check_conversation_ended(self):
-        pass
+        return fns, response, end_loop
 
     def get_all_instructions(self):
         instructions = []
