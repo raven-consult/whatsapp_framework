@@ -57,15 +57,18 @@ class AgentInterface(BaseInterface):
         for func in functions:
             sig = inspect.signature(func)
             name = func.__name__
+            docs = (func.__doc__ or "").strip().replace("\n", " ")
+            return_type = sig.return_annotation.__name__
+
+            args = ""
             for arg in sig.parameters.values():
                 arg_name = arg.name
                 arg_type = arg.annotation.__name__
-                return_type = sig.return_annotation.__name__
+                args += f"{arg_name}: {arg_type}, "
 
-                function_definitions.append(
-                    f"{name}({arg_name}: {arg_type}) -> {return_type}"
-                )
-
+            function_definitions.append(
+                f"{name}({args}) -> {return_type}: {docs}"
+            )
         system_instruction = "\n".join(
             [self.system_message]
             + function_definitions
