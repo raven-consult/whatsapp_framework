@@ -1,30 +1,20 @@
 import os
 import logging
 from functools import wraps
-from dataclasses import dataclass
+from datetime import datetime
+from typing import Iterable, List
 from contextlib import contextmanager
-from typing import Iterable, List, Literal
 
 import google.generativeai as genai
 from google.generativeai.types.model_types import json
 from google.protobuf.json_format import MessageToJson, MessageToDict
 from google.generativeai.types import GenerateContentResponse, StrictContentType
 
-from whatsapp._types import BaseInterface
+from whatsapp._datastore import BaseDatastore
+from whatsapp._types import BaseInterface, AgentMessage
 
 
 logger = logging.getLogger(__name__)
-
-MessageTypes = Literal["text", "function_call", "function_response"]
-
-
-@dataclass
-class Message:
-    chat_id: int
-    sender: str
-    data: str
-    id: int | None = None
-    type: MessageTypes = "text"
 
 
 def instruction(func):
@@ -39,6 +29,7 @@ def instruction(func):
 
 class AgentInterface(BaseInterface):
     system_message = ""
+    datastore: BaseDatastore
 
     def __init__(
             self,
@@ -49,16 +40,24 @@ class AgentInterface(BaseInterface):
         self.instructions = self.get_all_instructions()
 
         genai.configure(api_key=gemini_api_key)
-        self.create_table()
 
     def model(self, config=None):
+        additional_messages = (
+            "\n"
+            "Always try to use the tools and minimize use of your own knowledge."
+            "When you have fulfilled a customer request. Please end the chat with <END />"
+            "\n"
+        )
+
+        system_instruction = f"{self.system_message} {additional_messages}"
+
         return genai.GenerativeModel(
             tools=self.instructions,
             model_name=self.model_name,
-            system_instruction=self.system_message,
+            system_instruction=system_instruction,
         )
 
-    def _setup_history_data(self, history_data: List[Message]) -> Iterable[StrictContentType]:
+    def _setup_history_data(self, history_data: List[AgentMessage]) -> Iterable[StrictContentType]:
         """Converts conversation history into a structured format for the model."""
 
         history = []
@@ -85,84 +84,19 @@ class AgentInterface(BaseInterface):
                 history.append({"role": role, "parts": parts})
         return history
 
-    def create_table(self):
-        conn = self.get_connection()
-        cursor = conn.cursor()
+    def handler(self, conversation_id, message: str) -> str:
+        """Handle the chat messages and return the response and whether the chat has ended."""
 
-        logging.debug("Creating table")
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                conversation_id TEXT NOT NULL,
-                type TEXT NOT NULL,
-                sender TEXT NOT NULL,
-                data TEXT NOT NULL
-            )
-            """
-        )
-        conn.commit()
-
-    def insert_message(self, message: Message):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute(
-                """
-                INSERT INTO messages
-                (conversation_id, type, sender, data)
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    message.chat_id,
-                    message.type,
-                    message.sender,
-                    message.data,
-                )
-            )
-            conn.commit()
-        except Exception as e:
-            logging.error(e)
-            raise e
-
-    def get_messages(self, chat_id: str):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT id, conversation_id, type, sender, data
-            FROM messages
-            WHERE conversation_id=?
-            """,
-            (chat_id,),
-        )
-        res = cursor.fetchall()
-
-        return [
-            Message(
-                id=r[0],
-                chat_id=r[1],
-                type=r[2],
-                sender=r[3],
-                data=r[4],
-            ) for r in res
-        ]
-
-    def handler(self, chat_id, message: str):
         model = self.model()
-        history_data = self.get_messages(chat_id)
+        history_data = self.datastore.get_agent_messages(conversation_id)
         history = self._setup_history_data(history_data)
         session = model.start_chat(history=history)
 
-        self.insert_message(
-            Message(
-                type="text",
-                data=message,
-                sender="user",
-                chat_id=chat_id,
-            )
+        self.datastore.add_agent_message(
+            type="text",
+            data=message,
+            sender="customer",
+            conversation_id=conversation_id,
         )
 
         response = ""
@@ -175,10 +109,8 @@ class AgentInterface(BaseInterface):
             else:
                 res = session.send_message(message)
 
-            fns, response, end_loop = self._process_response(chat_id, res)
-
-            if any(fn.name == "end_chat" for fn in fns):
-                break
+            fns, response, end_loop = self._process_response(
+                conversation_id, res)
 
             function_call_response = []
             for fn in fns:
@@ -189,13 +121,12 @@ class AgentInterface(BaseInterface):
                 # Save responses to history
                 responses_json = [MessageToDict(r._pb)
                                   for r in function_call_response]  # type: ignore
-                self.insert_message(
-                    Message(
-                        sender="user",
-                        chat_id=chat_id,
-                        type="function_response",
-                        data=json.dumps(responses_json)
-                    )
+
+                self.datastore.add_agent_message(
+                    sender="customer",
+                    type="function_response",
+                    data=json.dumps(responses_json),
+                    conversation_id=conversation_id,
                 )
 
         return response
@@ -211,7 +142,7 @@ class AgentInterface(BaseInterface):
 
         return res_part
 
-    def _process_response(self, chat_id: int, res: GenerateContentResponse):
+    def _process_response(self, conversation_id: str, res: GenerateContentResponse):
         fns = []
         response = ""
         end_loop = False
@@ -222,28 +153,32 @@ class AgentInterface(BaseInterface):
                 args = ", ".join(f"{key}={val}" for key,
                                  val in fn.args.items())
                 logger.debug(
-                    f"Model declare a function call: {fn.name}({args})")
+                    f"Model declared a function call: {fn.name}({args})")
                 fns.append(fn)
                 response = MessageToJson(part._pb)
 
-                self.insert_message(
-                    Message(
-                        sender="bot",
-                        data=response,
-                        chat_id=chat_id,
-                        type="function_call",
-                    )
+                self.datastore.add_agent_message(
+                    sender="bot",
+                    data=response,
+                    type="function_call",
+                    conversation_id=conversation_id,
                 )
             else:
                 response = part.text
+                response = response.strip()
+
                 end_loop = True
-                self.insert_message(
-                    Message(
-                        type="text",
-                        sender="bot",
-                        data=response,
-                        chat_id=chat_id,
-                    )
+
+                if "<END />" in response:
+                    response = response.replace("<END />", "")
+                    timestamp = int(datetime.now().timestamp())
+                    self.datastore.end_conversation(conversation_id, timestamp)
+
+                self.datastore.add_agent_message(
+                    type="text",
+                    sender="bot",
+                    data=response,
+                    conversation_id=conversation_id,
                 )
         return fns, response, end_loop
 

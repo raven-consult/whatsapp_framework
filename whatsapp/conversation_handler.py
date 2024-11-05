@@ -2,9 +2,7 @@ import os
 import logging
 from queue import Queue
 from pathlib import Path
-from typing import Literal
 from datetime import datetime
-from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 
@@ -15,6 +13,7 @@ from werkzeug.serving import make_server
 
 from whatsapp._types import BaseInterface
 from whatsapp.utils import mime_to_extension
+from whatsapp._datastore import BaseDatastore
 from whatsapp.reply_message import Message as ReplyMessage
 from whatsapp.events import Change, WhatsappEvent, Message
 
@@ -26,33 +25,14 @@ WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
 NGROK_AUTH_TOKEN = os.environ.get("NGROK_AUTH_TOKEN", "")
 
 
-@dataclass
-class ConversationData:
-    id: int
-    customer_id: str
-    start_time: int
-    end_time: int | None
-    intent: str | None
-
-
-Sender = Literal["bot", "customer"]
-
-
-@dataclass
-class ConversationMessage:
-    id: int
-    conversation_id: int
-    sender: Sender
-    timestamp: int
-    message: str
-
-
 class ConversationHandler(BaseInterface, ABC):
     queue: Queue[Message] = Queue()
     url = "https://graph.facebook.com/v20.0"
 
     token: str = TOKEN
     whatsapp_number: str = WHATSAPP_NUMBER
+
+    datastore: BaseDatastore
 
     def __init__(
             self,
@@ -63,7 +43,6 @@ class ConversationHandler(BaseInterface, ABC):
         self.media_root = media_root
         self.start_proxy = start_proxy
         self.webhook_initialize_string = webhook_initialize_string
-        self.create_whatsapp_conversation_tables()
 
         if not self.whatsapp_number:
             raise ValueError(
@@ -81,169 +60,7 @@ class ConversationHandler(BaseInterface, ABC):
     def on_message(self, message: Message):
         pass
 
-    def create_whatsapp_conversation_tables(self):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        logging.debug("Creating tables...")
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS whatsapp_conversations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer_id TEXT NOT NULL,
-                start_time INTEGER NOT NULL, -- Unix timestamp
-                end_time INTEGER, -- Unix timestamp
-                intent TEXT
-            )
-            """
-        )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS whatsapp_conversations_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                conversation_id INTEGER NOT NULL,
-                sender TEXT NOT NULL,
-                timestamp INTEGER NOT NULL, -- Unix timestamp
-                message TEXT NOT NULL,
-                FOREIGN KEY (conversation_id) REFERENCES whatsapp_conversations (id)
-            )
-            """
-        )
-        conn.commit()
-
-    def get_current_conversation(self, customer_id: str):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT id, start_time, end_time, intent
-            FROM whatsapp_conversations
-            WHERE customer_id=? AND end_time IS NULL
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (customer_id,)
-        )
-        res = cursor.fetchone()
-
-        if res:
-            return ConversationData(
-                id=res[0],
-                customer_id=customer_id,
-                start_time=res[1],
-                end_time=res[2],
-                intent=res[3],
-            )
-        return None
-
-    def start_conversation(self, customer_id: str, start_time: int):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute(
-                """
-                INSERT INTO whatsapp_conversations
-                (customer_id, start_time)
-                VALUES (?, ?)
-                """,
-                (
-                    customer_id,
-                    start_time,
-                )
-            )
-            conn.commit()
-            conversation_id = cursor.lastrowid
-            if not conversation_id:
-                raise ValueError("Failed to start conversation with customer")
-
-            return ConversationData(
-                id=conversation_id,
-                customer_id=customer_id,
-                start_time=start_time,
-                end_time=None,
-                intent=None,
-            )
-        except Exception as e:
-            logging.error(e)
-            raise e
-
-    def add_message(self, conversation_id: int, sender: Sender, timestamp: int, message: str):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute(
-                """
-                INSERT INTO whatsapp_conversations_messages
-                (conversation_id, sender, timestamp, message)
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    conversation_id,
-                    sender,
-                    timestamp,
-                    message,
-                )
-            )
-            conn.commit()
-            conversation_message_id = cursor.lastrowid
-
-            if not conversation_message_id:
-                raise ValueError("Failed to add message to conversation")
-
-            return ConversationMessage(
-                id=conversation_message_id,
-                conversation_id=conversation_id,
-                sender=sender,
-                timestamp=timestamp,
-                message=message,
-            )
-        except Exception as e:
-            logging.error(e)
-            raise e
-
-    def end_conversation(self, conversation_id: int, end_time: int, intent: str):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute(
-                """
-                UPDATE whatsapp_conversations
-                SET end_time=?, intent=?
-                WHERE id=?
-                """,
-                (
-                    end_time,
-                    intent,
-                    conversation_id,
-                )
-            )
-            conn.commit()
-            res = cursor.execute(
-                """
-                SELECT id, customer_id, start_time, end_time, intent
-                FROM whatsapp_conversations
-                WHERE id=?
-                """,
-                (conversation_id,)
-            ).fetchone()
-
-            return ConversationData(
-                id=res[0],
-                customer_id=res[1],
-                start_time=res[2],
-                end_time=res[3],
-                intent=res[4],
-            )
-        except Exception as e:
-            logging.error(e)
-            raise e
-
     def _handle_text_message(self, change: Change, queue: Queue):
-
         if change.field == "messages":
             if change.value.messages:
                 for message in change.value.messages:
@@ -255,16 +72,17 @@ class ConversationHandler(BaseInterface, ABC):
                         contacts=change.value.contacts if change.value.contacts else [],
                     )
 
-                    conversation = self.get_current_conversation(
-                        message.from_)
+                    conversation = self.datastore.get_current_conversation(
+                        message.from_
+                    )
                     if not conversation:
-                        conversation = self.start_conversation(
+                        conversation = self.datastore.create_conversation(
                             message.from_,
                             int(datetime.now().timestamp()),
                         )
 
                     val = message.text.body if message.text else ""
-                    self.add_message(
+                    self.datastore.add_chat_message(
                         conversation.id,
                         "customer",
                         int(message.timestamp),
@@ -292,10 +110,10 @@ class ConversationHandler(BaseInterface, ABC):
                         )
 
                         # TODO: Storage of media messages
-                        conversation = self.get_current_conversation(
+                        conversation = self.datastore.get_current_conversation(
                             message.from_)
                         if not conversation:
-                            conversation = self.start_conversation(
+                            conversation = self.datastore.create_conversation(
                                 message.from_,
                                 int(datetime.now().timestamp()),
                             )
@@ -411,6 +229,10 @@ class ConversationHandler(BaseInterface, ABC):
         return data["id"]
 
     def send(self, message: ReplyMessage):
+        conversation = self.datastore.get_current_conversation(message.to)
+        assert conversation, "Attempted to send message without active conversation"
+
+        # Check if message has media and upload it
         if message.type in ["audio", "video", "document", "image", "sticker"]:
             media = getattr(message, message.type)
             filename_id = self._upload_media(
@@ -421,13 +243,10 @@ class ConversationHandler(BaseInterface, ABC):
             del media.mime_type
             setattr(message, message.type, media)
 
-        conversation = self.get_current_conversation(message.to)
-        if not conversation:
-            raise ValueError("No active conversation found")
 
         timestamp = int(datetime.now().timestamp())
         data = message.text.body if message.text else ""
-        self.add_message(
+        self.datastore.add_chat_message(
             conversation.id,
             "bot",
             timestamp,
