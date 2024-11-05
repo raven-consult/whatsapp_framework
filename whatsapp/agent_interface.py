@@ -1,9 +1,10 @@
 import os
+import inspect
 import logging
 from functools import wraps
 from datetime import datetime
-from typing import Iterable, List
 from contextlib import contextmanager
+from typing import Callable, Iterable, List
 
 import google.generativeai as genai
 from google.generativeai.types.model_types import json
@@ -42,14 +43,34 @@ class AgentInterface(BaseInterface):
         genai.configure(api_key=gemini_api_key)
 
     def model(self, config=None):
-        additional_messages = (
-            "\n"
-            "Always try to use the tools and minimize use of your own knowledge."
-            "When you have fulfilled a customer request. Please end the chat with <END />"
-            "\n"
-        )
+        additional_messages = [
+            "\n",
+            "Always try to use the tools and minimize use of your own knowledge.",
+            "When you have fulfilled a customer request. Please end the chat with <END />",
+            "\n",
+        ]
 
-        system_instruction = f"{self.system_message} {additional_messages}"
+        function_definitions = [
+            "You have access to the following tools:"
+        ]
+        functions = self.get_all_instructions()
+        for func in functions:
+            sig = inspect.signature(func)
+            name = func.__name__
+            for arg in sig.parameters.values():
+                arg_name = arg.name
+                arg_type = arg.annotation.__name__
+                return_type = sig.return_annotation.__name__
+
+                function_definitions.append(
+                    f"{name}({arg_name}: {arg_type}) -> {return_type}"
+                )
+
+        system_instruction = "\n".join(
+            [self.system_message]
+            + function_definitions
+            + additional_messages
+        )
 
         return genai.GenerativeModel(
             tools=self.instructions,
@@ -182,7 +203,7 @@ class AgentInterface(BaseInterface):
                 )
         return fns, response, end_loop
 
-    def get_all_instructions(self):
+    def get_all_instructions(self) -> List[Callable]:
         instructions = []
 
         for attr in dir(self):
