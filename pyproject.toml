@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "whatsapp-framework"
-version = "0.1.21"
+version = "0.5.00"
 description = "Whatsapp framework simplifies building and deploying whatsapp based application"
 authors = ["Damian Akpan <damiakpan@gmail.com>"]
 readme = "README.md"

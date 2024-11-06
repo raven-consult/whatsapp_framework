@@ -1,8 +1,9 @@
 # Whatsapp Framework
 
-**Whatsapp Framework** simplifies building and deploying whatsapp based applications.
+**Whatsapp Framework** helps you quickly build and deploy whatsapp chatbots in python.
 
-## Installation
+
+## Get started
 
 ```bash
 pip install whatsapp-framework
@@ -13,39 +14,29 @@ pip install whatsapp-framework
 Here's a basic example of how to use Whatsapp Framework:
 
 ```python
-from whatsapp.events import Message
-from whatsapp.chat import ChatHandler
-from whatsapp.reply_message import Message as ReplyMessage, Text
+from datetime import datetime
+from whatsapp import Conversation, instruction
 
 
-class SimpleChatHandler(ChatHandler):
-    token = "<whatsapp_access_token>"
-    whatsapp_number = "<whatsapp_phone_number>"
+class TimeCheckerBot(Conversation):
+    token = "<whatsapp_admin_token>"
+    whatsapp_number = "<whatsapp_number>"
 
-    def on_message(self, message: Message):
-        message_type = message.type
-        file = message.message.file
-        name = message.contacts[0].profile.name
+    system_message = (
+        "You are helpful conversation assistant for casual chat."
+    )
 
-        req = ReplyMessage(
-            type="text",
-            to=message.to,
-            text=Text(
-                preview_url=False,
-                body=f"""
-Hello, {name}!
-
-I received a {message_type} from you.
-I've saved it as {file}.
-"""
-            ),
-        )
-        self.send(req)
-
+    @instruction
+    def check_time(self):
+        current_time = datetime.now().strftime('%H:%M:%S')
+        return f"The current time is {current_time}"
 
 def main():
-    chat_handler = SimpleChatHandler(debug=True, start_proxy=False)
-    chat_handler.start()
+    chat_handler = RestaurantAttendantConversation(
+        debug=True, start_proxy=True,
+        gemini_model_name="models/gemini-1.5-flash",
+    )
+    chat_handler.start(5000)
 
 
 if __name__ == "__main__":
