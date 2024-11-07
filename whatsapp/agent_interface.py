@@ -2,9 +2,7 @@ import os
 import inspect
 import logging
 from functools import wraps
-from datetime import datetime
-from contextlib import contextmanager
-from typing import Callable, Iterable, List
+from typing import Tuple, Callable, Iterable, List
 
 import google.generativeai as genai
 from google.generativeai.types.model_types import json
@@ -12,7 +10,7 @@ from google.protobuf.json_format import MessageToJson, MessageToDict
 from google.generativeai.types import GenerateContentResponse, StrictContentType
 
 from whatsapp._datastore import BaseDatastore
-from whatsapp._types import BaseInterface, AgentMessage
+from whatsapp._types import BaseInterface, AgentMessage, ConversationData
 
 
 logger = logging.getLogger(__name__)
@@ -108,11 +106,11 @@ class AgentInterface(BaseInterface):
                 history.append({"role": role, "parts": parts})
         return history
 
-    def handler(self, conversation_id, message: str) -> str:
+    def handler(self, conversation: ConversationData, message: str) -> Tuple[str, bool]:
         """Handle the chat messages and return the response and whether the chat has ended."""
 
         model = self.model()
-        history_data = self.datastore.get_agent_messages(conversation_id)
+        history_data = self.datastore.get_agent_messages(conversation.id)
         history = self._setup_history_data(history_data)
         session = model.start_chat(history=history)
 
@@ -120,10 +118,11 @@ class AgentInterface(BaseInterface):
             type="text",
             data=message,
             sender="customer",
-            conversation_id=conversation_id,
+            conversation_id=conversation.id,
         )
 
         response = ""
+        end_chat = False
         end_loop = False
         function_call_response = None
 
@@ -133,8 +132,8 @@ class AgentInterface(BaseInterface):
             else:
                 res = session.send_message(message)
 
-            fns, response, end_loop = self._process_response(
-                conversation_id, res)
+            fns, response, end_loop, end_chat = self._process_response(
+                conversation.id, res)
 
             function_call_response = []
             for fn in fns:
@@ -150,10 +149,9 @@ class AgentInterface(BaseInterface):
                     sender="customer",
                     type="function_response",
                     data=json.dumps(responses_json),
-                    conversation_id=conversation_id,
+                    conversation_id=conversation.id,
                 )
-
-        return response
+        return response, end_chat
 
     def _call_function(self, fn):
         # Call the function and get the response
@@ -169,6 +167,7 @@ class AgentInterface(BaseInterface):
     def _process_response(self, conversation_id: str, res: GenerateContentResponse):
         fns = []
         response = ""
+        end_chat = False
         end_loop = False
 
         for part in res.parts:
@@ -194,9 +193,8 @@ class AgentInterface(BaseInterface):
                 end_loop = True
 
                 if "<END />" in response:
+                    end_chat = True
                     response = response.replace("<END />", "")
-                    timestamp = int(datetime.now().timestamp())
-                    self.datastore.end_conversation(conversation_id, timestamp)
 
                 self.datastore.add_agent_message(
                     type="text",
@@ -204,7 +202,7 @@ class AgentInterface(BaseInterface):
                     data=response,
                     conversation_id=conversation_id,
                 )
-        return fns, response, end_loop
+        return fns, response, end_loop, end_chat
 
     def get_all_instructions(self) -> List[Callable]:
         instructions = []
@@ -220,19 +218,3 @@ class AgentInterface(BaseInterface):
                 instructions.append(func)
 
         return instructions
-
-    @contextmanager
-    def start_chat(self, chat_id: str):
-        handler = self.get_chat(chat_id)
-
-        try:
-            logger.debug("Chat started")
-            yield handler
-        finally:
-            logger.debug("Chat ended")
-
-    def get_chat(self, chat_id: str):
-        def chat(message: str):
-            return self.handler(chat_id, message)
-
-        return chat

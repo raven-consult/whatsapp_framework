@@ -2,7 +2,6 @@ import os
 import logging
 from queue import Queue
 from pathlib import Path
-from datetime import datetime
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 
@@ -23,6 +22,8 @@ logger = logging.getLogger(__name__)
 TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
 WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "")
 NGROK_AUTH_TOKEN = os.environ.get("NGROK_AUTH_TOKEN", "")
+
+executor = ThreadPoolExecutor()
 
 
 class ConversationHandler(BaseInterface, ABC):
@@ -53,8 +54,10 @@ class ConversationHandler(BaseInterface, ABC):
     def _handle_new_message(self):
         logger.debug("Listening for new messages...")
         while True:
+            print("NEW MESSAGE")
             message = self.queue.get(block=True)
-            self.on_message(message)
+            executor.submit(lambda: self.on_message(message))
+            print("MESSAGE PROCESSED")
 
     @abstractmethod
     def on_message(self, message: Message):
@@ -70,23 +73,6 @@ class ConversationHandler(BaseInterface, ABC):
                         to=message.from_,
                         type=message.type,
                         contacts=change.value.contacts if change.value.contacts else [],
-                    )
-
-                    conversation = self.datastore.get_current_conversation(
-                        message.from_
-                    )
-                    if not conversation:
-                        conversation = self.datastore.create_conversation(
-                            message.from_,
-                            int(datetime.now().timestamp()),
-                        )
-
-                    val = message.text.body if message.text else ""
-                    self.datastore.add_chat_message(
-                        conversation.id,
-                        "customer",
-                        int(message.timestamp),
-                        val,
                     )
                     queue.put(data)
 
@@ -108,15 +94,6 @@ class ConversationHandler(BaseInterface, ABC):
                             type=message.type,
                             contacts=change.value.contacts if change.value.contacts else [],
                         )
-
-                        # TODO: Storage of media messages
-                        conversation = self.datastore.get_current_conversation(
-                            message.from_)
-                        if not conversation:
-                            conversation = self.datastore.create_conversation(
-                                message.from_,
-                                int(datetime.now().timestamp()),
-                            )
 
                         queue.put(data)
 
@@ -229,9 +206,6 @@ class ConversationHandler(BaseInterface, ABC):
         return data["id"]
 
     def send(self, message: ReplyMessage):
-        conversation = self.datastore.get_current_conversation(message.to)
-        assert conversation, "Attempted to send message without active conversation"
-
         # Check if message has media and upload it
         if message.type in ["audio", "video", "document", "image", "sticker"]:
             media = getattr(message, message.type)
@@ -242,16 +216,6 @@ class ConversationHandler(BaseInterface, ABC):
             del media.file
             del media.mime_type
             setattr(message, message.type, media)
-
-
-        timestamp = int(datetime.now().timestamp())
-        data = message.text.body if message.text else ""
-        self.datastore.add_chat_message(
-            conversation.id,
-            "bot",
-            timestamp,
-            data,
-        )
 
         response = requests.post(
             f"{self.url}/{self.whatsapp_number}/messages",
@@ -267,6 +231,6 @@ class ConversationHandler(BaseInterface, ABC):
         return True
 
     def start(self, port: int = 5000, host="localhost"):
-        with ThreadPoolExecutor() as executor:
+        with executor:
             executor.submit(self._handle_new_message)
             executor.submit(lambda: self.create_server(self.queue, host, port))

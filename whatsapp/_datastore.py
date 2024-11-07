@@ -42,8 +42,10 @@ class SQLiteDatastore(BaseDatastore):
 
     def __init__(self, db_path):
         self.db_path = db_path
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.cursor = self.conn.cursor()
+
+        self.create_tables()
 
     def create_tables(self):
         logging.debug("Creating tables...")
@@ -65,7 +67,7 @@ class SQLiteDatastore(BaseDatastore):
                 conversation_id TEXT NOT NULL,
                 type TEXT NOT NULL,
                 sender TEXT NOT NULL,
-                data TEXT NOT NULL
+                data TEXT NOT NULL,
                 FOREIGN KEY (conversation_id) REFERENCES conversations (id)
             )
             """
@@ -88,7 +90,7 @@ class SQLiteDatastore(BaseDatastore):
         self.cursor.execute(
             """
             INSERT INTO conversations
-            (customer_id, start_time, intent)
+            (customer_id, start_time)
             VALUES (?, ?)
             """,
             (customer_id, start_time,)
@@ -109,7 +111,7 @@ class SQLiteDatastore(BaseDatastore):
     def get_current_conversation(self, customer_id):
         self.cursor.execute(
             """
-            SELECT id, start_time
+            SELECT id, customer_id, start_time, end_time, intent
             FROM conversations
             WHERE customer_id=? AND end_time IS NULL
             ORDER BY start_time DESC
@@ -118,7 +120,14 @@ class SQLiteDatastore(BaseDatastore):
             (customer_id,)
         )
         res = self.cursor.fetchone()
-        return res
+
+        return ConversationData(
+            id=res[0],
+            customer_id=res[1],
+            start_time=res[2],
+            end_time=res[3],
+            intent=res[4],
+        ) if res else None
 
     def end_conversation(self, customer_id: str, timestamp: int):
         self.cursor.execute(
