@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "restaurant-attendant"
+version = "0.1.0"
+description = ""
+authors = ["Damian Akpan <damiakpan@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+whatsapp-framework = {path = "../.."}
+pyairtable = "^2.3.5"
+schedule = "^1.2.2"
+chromadb = "^0.5.18"
+google-generativeai = "^0.8.3"
+requests = "^2.32.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
